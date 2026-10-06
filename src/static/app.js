@@ -3,6 +3,35 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const loginRequired = document.getElementById("login-required");
+  const userMenuToggle = document.getElementById("user-menu-toggle");
+  const userMenu = document.getElementById("user-menu");
+  const loginOpen = document.getElementById("login-open");
+  const loginDialog = document.getElementById("login-dialog");
+  const loginForm = document.getElementById("login-form");
+  const loginError = document.getElementById("login-error");
+  const logoutButton = document.getElementById("logout");
+  const teacherIdentity = document.getElementById("teacher-identity");
+  let isTeacher = false;
+
+  function updateAuthenticationUI(username) {
+    isTeacher = Boolean(username);
+    signupForm.hidden = !isTeacher;
+    loginRequired.classList.toggle("hidden", isTeacher);
+    loginOpen.classList.toggle("hidden", isTeacher);
+    logoutButton.classList.toggle("hidden", !isTeacher);
+    teacherIdentity.textContent = isTeacher ? `Logged in as ${username}` : "";
+    teacherIdentity.classList.toggle("hidden", !isTeacher);
+  }
+
+  async function refreshAuthentication() {
+    const response = await fetch("/auth/session");
+    if (!response.ok) {
+      throw new Error("Unable to check teacher login status");
+    }
+    const session = await response.json();
+    updateAuthenticationUI(session.authenticated ? session.username : null);
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -12,6 +41,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.replaceChildren(activitySelect.options[0]);
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -30,7 +60,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${details.participants
                   .map(
                     (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                      `<li><span class="participant-email">${email}</span>${
+                        isTeacher
+                          ? `<button class="delete-btn" data-activity="${name}" data-email="${email}" aria-label="Remove ${email} from ${name}">Remove</button>`
+                          : ""
+                      }</li>`
                   )
                   .join("")}
               </ul>
@@ -110,6 +144,68 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  userMenuToggle.addEventListener("click", () => {
+    const isExpanded = userMenuToggle.getAttribute("aria-expanded") === "true";
+    userMenuToggle.setAttribute("aria-expanded", String(!isExpanded));
+    userMenu.classList.toggle("hidden", isExpanded);
+  });
+
+  loginOpen.addEventListener("click", () => {
+    userMenu.classList.add("hidden");
+    userMenuToggle.setAttribute("aria-expanded", "false");
+    loginError.classList.add("hidden");
+    loginDialog.showModal();
+  });
+
+  document.getElementById("login-cancel").addEventListener("click", () => {
+    loginDialog.close();
+  });
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    loginError.classList.add("hidden");
+
+    try {
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: document.getElementById("username").value,
+          password: document.getElementById("password").value,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.detail || "Unable to log in");
+      }
+
+      loginForm.reset();
+      loginDialog.close();
+      await refreshAuthentication();
+      await fetchActivities();
+    } catch (error) {
+      loginError.textContent = error.message;
+      loginError.classList.remove("hidden");
+    }
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    try {
+      const response = await fetch("/auth/logout", { method: "POST" });
+      if (!response.ok) {
+        throw new Error("Unable to log out");
+      }
+      updateAuthenticationUI(null);
+      userMenu.classList.add("hidden");
+      userMenuToggle.setAttribute("aria-expanded", "false");
+      await fetchActivities();
+    } catch (error) {
+      messageDiv.textContent = error.message;
+      messageDiv.className = "error";
+      messageDiv.classList.remove("hidden");
+    }
+  });
+
   // Handle form submission
   signupForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -156,5 +252,11 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Initialize app
-  fetchActivities();
+  refreshAuthentication()
+    .then(fetchActivities)
+    .catch((error) => {
+      activitiesList.textContent =
+        "Failed to check teacher login status. Please reload the page.";
+      console.error("Error checking teacher login status:", error);
+    });
 });
